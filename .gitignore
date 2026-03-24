@@ -5,5 +5,8 @@
 **/__pycache__/
 **/*.pyc
 
-# Report 
+# Data cache
+.cache/
+
+# Report
 docs/
