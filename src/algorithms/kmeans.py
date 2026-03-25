@@ -214,8 +214,9 @@ def euclidean_distance(a: np.ndarray, b: np.ndarray) -> float:
 if __name__ == "__main__":
     # 测试K-means
     import sys
-    sys.path.append('..')
-    from data.iris import load_iris, normalize
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from src.data.iris import load_iris, normalize
 
     X, y = load_iris()
     X_norm, _, _ = normalize(X)

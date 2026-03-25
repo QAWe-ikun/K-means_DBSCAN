@@ -230,21 +230,35 @@ def suggest_eps(X: np.ndarray, min_samples: int = 5) -> float:
 if __name__ == "__main__":
     # 测试DBSCAN
     import sys
-    sys.path.append('..')
-    from data.iris import load_iris, normalize
-    
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from src.data.iris import load_iris, normalize
+    from src.evaluation.metrics import evaluate_clustering
+
     X, y = load_iris()
     X_norm, _, _ = normalize(X)
-    
+
     # 建议eps值
-    suggested = suggest_eps(X_norm, min_samples=5)
+    suggested = suggest_eps(X_norm, min_samples=9)
     print(f"建议的eps值: {suggested:.4f}")
-    
+
     # 测试DBSCAN
-    dbscan = DBSCAN(eps=0.5, min_samples=5)
+    dbscan = DBSCAN(eps=0.62, min_samples=9)
     labels = dbscan.fit_predict(X_norm)
-    
+
+    print(f"\n=== DBSCAN 聚类结果 ===")
     print(f"簇数量: {dbscan.n_clusters_}")
     print(f"噪声点数量: {dbscan.get_n_noise()}")
-    print(f"核心点数量: {len(dbscan.core_sample_indices_)}") # type: ignore
-    print(f"标签分布: {np.bincount(labels + 1)}")  # +1因为噪声点为-1
+    print(f"核心点数量: {len(dbscan.core_sample_indices_)}")  # type: ignore
+    
+    # 评估指标
+    metrics = evaluate_clustering(X_norm, labels, y)
+    print(f"\n=== 评估指标 ===")
+    print(f"准确率: {metrics['accuracy']:.4f}")
+    print(f"轮廓系数: {metrics['silhouette_score']:.4f}")
+    print(f"CH指数: {metrics['calinski_harabasz_score']:.2f}")
+    
+    # 标签分布
+    print(f"\n=== 标签分布 ===")
+    print(f"预测标签分布: {np.bincount(labels + 1)}")  # +1因为噪声点为-1
+    print(f"真实标签分布: {np.bincount(y)}")

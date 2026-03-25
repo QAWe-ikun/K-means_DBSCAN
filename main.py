@@ -96,28 +96,38 @@ def experiment_kmeans(X: np.ndarray, y: np.ndarray, output_dir: str):
 def relabel_noise_as_cluster(labels: np.ndarray) -> np.ndarray:
     """
     将噪声点（标签为-1）重新标记为一个新簇
-    
+    并将所有标签重新映射为连续的0, 1, 2...
+
     Args:
         labels: 原始标签（噪声点为-1）
-        
+
     Returns:
-        new_labels: 新标签（噪声点被分配到新簇）
+        new_labels: 新标签（噪声点被分配到新簇，标签为连续整数）
     """
     new_labels = labels.copy()
     noise_mask = labels == -1
     
+    # 获取非噪声点的标签并排序
+    unique_non_noise = np.unique(labels[labels >= 0])
+    
+    # 创建映射：原始标签 -> 新标签
+    label_map = {old: new for new, old in enumerate(unique_non_noise)}
+    
+    # 重新映射非噪声点
+    for old, new in label_map.items():
+        new_labels[labels == old] = new
+    
+    # 将噪声点分配到新簇
     if np.any(noise_mask):
-        # 找到当前最大的簇标签
-        max_label = np.max(labels[labels >= 0])
-        # 将噪声点分配到新簇
-        new_labels[noise_mask] = max_label + 1
+        new_cluster = len(unique_non_noise)
+        new_labels[noise_mask] = new_cluster
     
     return new_labels
 
 
 def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
     """
-    DBSCAN聚类实验：调整eps和min_samples观察聚类结果变化
+    DBSCAN聚类实验：根据每个min_samples自动选择最优eps_range进行测试
     当只识别出2个簇时，将噪声点归为第3类
 
     Args:
@@ -129,25 +139,39 @@ def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
     print("DBSCAN 聚类实验")
     print("=" * 60)
 
-    # 建议eps值
-    suggested_eps = suggest_eps(X, min_samples=5)
-    print(f"\n建议的eps值: {suggested_eps:.4f}")
-
-    # 测试不同的参数组合
-    eps_range = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     min_samples_range = [3, 4, 5, 6, 7]
-
     results = []
 
+    print("\n根据min_samples自动选择eps_range:")
+    print("-" * 50)
+    
+    # 为每个min_samples计算建议的eps值并设置eps_range
+    eps_ranges = {}
+    for min_samples in min_samples_range:
+        suggested = suggest_eps(X, min_samples=min_samples)
+        # 基于建议值设置eps范围（0.5倍到1.5倍，步长0.05）
+        eps_min = max(0.2, round(suggested * 0.5, 2))
+        eps_max = round(suggested * 1.5, 2)
+        eps_range = list(np.arange(eps_min, eps_max + 0.05, 0.05))
+        eps_range = [round(e, 2) for e in eps_range]
+        eps_ranges[min_samples] = eps_range
+        print(f"min_samples={min_samples}: 建议eps={suggested:.4f}, 测试范围={eps_range}")
+    
+    print("-" * 50)
+
+    # 热力图使用固定的eps_range
+    eps_range_heatmap = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    min_samples_range_heatmap = [3, 4, 5, 6, 7]
+
     # 存储指标矩阵用于热力图
-    accuracy_matrix = np.zeros((len(min_samples_range), len(eps_range)))
-    accuracy_3class_matrix = np.zeros((len(min_samples_range), len(eps_range)))
-    silhouette_matrix = np.zeros((len(min_samples_range), len(eps_range)))
-    ch_matrix = np.zeros((len(min_samples_range), len(eps_range)))
-    n_clusters_matrix = np.zeros((len(min_samples_range), len(eps_range)))
+    accuracy_matrix = np.zeros((len(min_samples_range_heatmap), len(eps_range_heatmap)))
+    accuracy_3class_matrix = np.zeros((len(min_samples_range_heatmap), len(eps_range_heatmap)))
+    silhouette_matrix = np.zeros((len(min_samples_range_heatmap), len(eps_range_heatmap)))
+    ch_matrix = np.zeros((len(min_samples_range_heatmap), len(eps_range_heatmap)))
+    n_clusters_matrix = np.zeros((len(min_samples_range_heatmap), len(eps_range_heatmap)))
 
     for i, min_samples in enumerate(min_samples_range):
-        for j, eps in enumerate(eps_range):
+        for j, eps in enumerate(eps_range_heatmap):
             dbscan = DBSCAN(eps=eps, min_samples=min_samples)
             labels = dbscan.fit_predict(X)
 
@@ -163,13 +187,13 @@ def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
 
             # 原始评估（噪声点单独处理）
             metrics = evaluate_clustering(X, labels, y)
-            
+
             # 如果只有2个簇且有噪声点，将噪声点归为第3类
             labels_3class = labels.copy()
             n_noise = dbscan.get_n_noise()
             if dbscan.n_clusters_ == 2 and n_noise > 0:
                 labels_3class = relabel_noise_as_cluster(labels)
-            
+
             # 计算3类准确率
             acc_3class = accuracy_score(y, labels_3class)
 
@@ -206,11 +230,13 @@ def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
     valid_results = [r for r in results if r['n_clusters'] >= 2]
     if valid_results:
         best_result = max(valid_results, key=lambda r: r['acc_3class'])
-
-        print(f"\n最佳参数组合: eps={best_result['eps']}, min_samples={best_result['min_samples']}")
+        print(f"\n优化后最佳参数: eps={best_result['eps']}, min_samples={best_result['min_samples']}")
         print(f"原始准确率: {best_result['metrics']['accuracy']:.4f}")
         print(f"3类准确率（噪声点归为第3类）: {best_result['acc_3class']:.4f}")
-        print(f"簇数量: {best_result['n_clusters']}, 噪声点: {best_result['n_noise']}")
+        print(f"轮廓系数: {best_result['metrics']['silhouette_score']:.4f}")
+        print(f"CH指数: {best_result['metrics']['calinski_harabasz_score']:.2f}")
+        print(f"簇数量: {best_result['n_clusters']}")
+        print(f"噪声点: {best_result['n_noise']}")
 
         # 绘制最佳结果（使用3类标签）
         fig = plot_clusters_2d(X, best_result['labels_3class'],
@@ -226,7 +252,7 @@ def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
         '簇数量': n_clusters_matrix
     }
 
-    fig = plot_dbscan_metrics(eps_range, min_samples_range, metrics_matrix)
+    fig = plot_dbscan_metrics(eps_range_heatmap, min_samples_range_heatmap, metrics_matrix)
     fig.savefig(os.path.join(output_dir, 'dbscan_metrics_heatmap.png'), dpi=150)
 
     # 返回最佳结果
@@ -237,6 +263,7 @@ def experiment_dbscan(X: np.ndarray, y: np.ndarray, output_dir: str):
 def experiment_dbscan_optimized(X: np.ndarray, y: np.ndarray, output_dir: str):
     """
     优化的DBSCAN聚类实验：使用花瓣特征提升准确率
+    根据每个min_samples自动选择最优eps_range进行测试
     当只识别出2个簇时，将噪声点归为第3类
 
     Args:
@@ -254,13 +281,33 @@ def experiment_dbscan_optimized(X: np.ndarray, y: np.ndarray, output_dir: str):
     print("\n使用花瓣特征（petal_length, petal_width）进行聚类")
     print("原因：花瓣特征对三个类别的区分度更高")
 
+    min_samples_range = [3, 4, 5, 6, 7]
+    
+    print("\n根据min_samples自动选择eps_range:")
+    print("-" * 50)
+    
+    # 为每个min_samples计算建议的eps值并设置eps_range
+    eps_ranges = {}
+    for min_samples in min_samples_range:
+        suggested = suggest_eps(X_petal, min_samples=min_samples)
+        # 基于建议值设置eps范围（0.5倍到1.5倍，步长0.05）
+        eps_min = max(0.1, round(suggested * 0.5, 2))
+        eps_max = round(suggested * 1.5, 2)
+        eps_range = list(np.arange(eps_min, eps_max + 0.05, 0.05))
+        eps_range = [round(e, 2) for e in eps_range]
+        eps_ranges[min_samples] = eps_range
+        print(f"min_samples={min_samples}: 建议eps={suggested:.4f}, 测试范围={eps_range}")
+    
+    print("-" * 50)
+
     # 搜索最佳参数
     best_result = None
     best_acc = 0
 
-    for eps in np.arange(0.3, 0.8, 0.05):
-        for min_samples in range(3, 8):
-            dbscan = DBSCAN(eps=round(eps, 2), min_samples=min_samples)  # type: ignore
+    for min_samples in min_samples_range:
+        eps_range = eps_ranges[min_samples]
+        for eps in eps_range:
+            dbscan = DBSCAN(eps=eps, min_samples=min_samples)
             labels = dbscan.fit_predict(X_petal)
 
             unique_labels = np.unique(labels[labels >= 0])
@@ -272,7 +319,7 @@ def experiment_dbscan_optimized(X: np.ndarray, y: np.ndarray, output_dir: str):
             n_noise = dbscan.get_n_noise()
             if dbscan.n_clusters_ == 2 and n_noise > 0:
                 labels_3class = relabel_noise_as_cluster(labels)
-            
+
             # 计算3类准确率
             acc_3class = accuracy_score(y, labels_3class)
 
@@ -280,7 +327,7 @@ def experiment_dbscan_optimized(X: np.ndarray, y: np.ndarray, output_dir: str):
                 best_acc = acc_3class
                 metrics = evaluate_clustering(X_petal, labels, y)
                 best_result = {
-                    'eps': round(eps, 2),
+                    'eps': eps,
                     'min_samples': min_samples,
                     'labels': labels,
                     'labels_3class': labels_3class,
@@ -367,8 +414,8 @@ def compare_algorithms(kmeans_results: list, dbscan_result: dict,
         fig = plot_comparison(kmeans_best['metrics'], dbscan_metrics_3class)
         fig.savefig(os.path.join(output_dir, 'algorithm_comparison.png'), dpi=150)
 
-    # 绘制并排对比图
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    # 绘制并排对比图（K-means、DBSCAN 4特征、真实标签）
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     # K-means结果
     from src.visualization.plot import pca_reduce
@@ -388,27 +435,19 @@ def compare_algorithms(kmeans_results: list, dbscan_result: dict,
     if dbscan_result:
         ax = axes[1]
         labels_plot = dbscan_result['labels_3class']
-        for i in range(3):
-            mask = labels_plot == i
-            ax.scatter(X_2d[mask, 0], X_2d[mask, 1], c=[colors[i]], s=50, alpha=0.7)
+        unique_labels = np.unique(labels_plot)
+        # 使用实际存在的标签进行绘制
+        for idx, label in enumerate(sorted(unique_labels)):
+            mask = labels_plot == label
+            ax.scatter(X_2d[mask, 0], X_2d[mask, 1], c=[colors[idx]], s=50, alpha=0.7,
+                      label=f'簇{idx}')
         ax.set_title(f"DBSCAN (4特征)\n3类准确率: {dbscan_result['acc_3class']:.4f}")
         ax.set_xlabel('主成分 1')
         ax.set_ylabel('主成分 2')
-
-    # DBSCAN（花瓣特征，噪声点归为第3类）
-    if dbscan_optimized:
-        ax = axes[2]
-        X_petal_2d = X[:, 2:4]
-        labels_plot = dbscan_optimized['labels_3class']
-        for i in range(3):
-            mask = labels_plot == i
-            ax.scatter(X_petal_2d[mask, 0], X_petal_2d[mask, 1], c=[colors[i]], s=50, alpha=0.7)
-        ax.set_title(f"DBSCAN (花瓣特征)\n3类准确率: {dbscan_optimized['acc_3class']:.4f}")
-        ax.set_xlabel('花瓣长度')
-        ax.set_ylabel('花瓣宽度')
+        ax.legend()
 
     # 真实标签
-    ax = axes[3]
+    ax = axes[2]
     true_colors = plt.cm.Set1(np.linspace(0, 1, 3))  # type: ignore
     label_names = ['Setosa', 'Versicolor', 'Virginica']
     for i in range(3):
